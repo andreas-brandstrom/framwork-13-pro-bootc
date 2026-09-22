@@ -1,7 +1,9 @@
 ARG FEDORA=44
+ARG USERNAME
 
-# ---------- common: shared base, no user ----------
+# ---------- common: shared base + declarative account, no password ----------
 FROM quay.io/fedora/fedora-bootc:${FEDORA} AS common
+ARG USERNAME
 
 # Network, LUKS + TPM2 support in the initramfs
 RUN dnf -y install NetworkManager-wifi NetworkManager-tui cryptsetup \
@@ -12,23 +14,42 @@ RUN mkdir -p /usr/lib/dracut/dracut.conf.d && \
     kver=$(cd /usr/lib/modules && echo *) && \
     dracut -vf --no-hostonly --kver "$kver" "/usr/lib/modules/$kver/initramfs.img"
 
+# Declare the interactive user account via systemd-sysusers rather than
+# useradd. This file lives in /usr, not /etc, so it isn't subject to
+# bootc's /etc 3-way merge on upgrade: systemd-sysusers re-applies it at
+# every boot, so the account exists on ANY image built FROM this stage --
+# including a bare `desktop` image pulled straight from a registry with
+# no local build. sysusers.d never sets a password; that's handled
+# separately (see the `install` stage, and `passwd` after first login).
+RUN test -n "$USERNAME" && \
+    mkdir -p /usr/lib/sysusers.d /usr/lib/tmpfiles.d && \
+    printf 'u %s 1000 "%s" /var/home/%s /bin/bash\nm %s wheel\n' \
+      "$USERNAME" "$USERNAME" "$USERNAME" "$USERNAME" \
+      > "/usr/lib/sysusers.d/10-${USERNAME}.conf" && \
+    printf 'd /var/home/%s 0700 %s %s - -\n' \
+      "$USERNAME" "$USERNAME" "$USERNAME" \
+      > "/usr/lib/tmpfiles.d/10-${USERNAME}-home.conf"
 
-# ---------- install: small image for the live USB install ----------
+
+# ---------- install: one-time Live USB bootstrap image. Local only, never published. ----------
 FROM common AS install
 ARG USERNAME
 ARG PASSWORD_HASH
+# Force-create the account now (systemd-sysusers normally runs at boot,
+# not build time) so we can bake in a password to get through the very
+# first login. Replace this password with `passwd` after first boot --
+# from then on it's a local edit that survives every future switch.
 RUN test -n "$USERNAME" && test -n "$PASSWORD_HASH" && \
-    useradd -m -u 1000 -G wheel -s /bin/bash "$USERNAME" && \
+    systemd-sysusers && \
     usermod -p "$PASSWORD_HASH" "$USERNAME"
 RUN bootc container lint
 
 
-# ---------- desktop: the part you'll publish later. NO user, NO secrets ----------
+# ---------- desktop: the real system. Same image whether built locally or published. No secrets. ----------
 FROM common AS desktop
 
 # KDE Plasma, fingerprint, keyring
-# (confirm the group name with: dnf group list --hidden | grep -i kde)
-RUN dnf -y group install kde-desktop-environment && \
+RUN dnf -y group install kde-desktop && \
     dnf -y install fprintd fprintd-pam gnome-keyring gnome-keyring-pam seahorse && \
     dnf clean all
 
@@ -56,16 +77,4 @@ RUN mkdir -p /var/opt && \
       printf 'd /var/opt 0755 root root -\nL+ /var/opt/microsoft - - - - /usr/lib/opt/microsoft\n' > /usr/lib/tmpfiles.d/microsoft-opt.conf; \
     fi
 
-RUN bootc container lint
-
-
-# ---------- local: what you actually run (desktop + your user) ----------
-# When you start using a registry, change the next line to:
-#   FROM ghcr.io/YOU/fw13:desktop AS local
-FROM desktop AS local
-ARG USERNAME
-ARG PASSWORD_HASH
-RUN test -n "$USERNAME" && test -n "$PASSWORD_HASH" && \
-    useradd -m -u 1000 -G wheel -s /bin/bash "$USERNAME" && \
-    usermod -p "$PASSWORD_HASH" "$USERNAME"
 RUN bootc container lint
