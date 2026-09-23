@@ -6,12 +6,19 @@ FROM quay.io/fedora/fedora-bootc:${FEDORA} AS common
 ARG USERNAME
 
 # Network, LUKS + TPM2 support in the initramfs
+# Sync to Fedora's current `updates` repo rather than trusting whatever
+# snapshot the base image was pinned to -- this is what actually keeps
+# kernel/firmware pairings (and everything else) current on every future
+# rebuild, not just this one.
+RUN dnf -y update && dnf clean all
+
 RUN dnf -y install NetworkManager-wifi NetworkManager-tui cryptsetup \
-        tpm2-tools tpm2-tss authselect openssl linux-firmware && \
+        tpm2-tools tpm2-tss authselect openssl linux-firmware \
+        iwlwifi-mvm-firmware git && \
     dnf clean all
 RUN mkdir -p /usr/lib/dracut/dracut.conf.d && \
     echo 'add_dracutmodules+=" crypt tpm2-tss "' > /usr/lib/dracut/dracut.conf.d/60-luks-tpm2.conf && \
-    kver=$(cd /usr/lib/modules && echo *) && \
+    kver=$(cd /usr/lib/modules && ls -1 | sort -V | tail -1) && \
     dracut -vf --no-hostonly --kver "$kver" "/usr/lib/modules/$kver/initramfs.img"
 
 # Declare the interactive user account via systemd-sysusers rather than
