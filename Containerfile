@@ -52,16 +52,36 @@ RUN test -n "$USERNAME" && test -n "$PASSWORD_HASH" && \
 RUN bootc container lint
 
 
-# ---------- desktop: the real system. Same image whether built locally or published. No secrets. ----------
+# ---------- desktop: the real system. Same image whether built locally or published. ----------
 FROM common AS desktop
+ARG USERNAME
+ARG PASSWORD_HASH
+# Materialize the account now (not just via sysusers.d at boot) so this
+# image's own default /etc/passwd actually has it -- unconditionally,
+# regardless of whether a password is supplied. Without this, the first
+# switch away from `install` treats your account as "unmodified" and
+# adopts this image's (accountless) default wholesale, wiping it rather
+# than just resetting the password.
+#
+# The password itself is optional here: if you've already set a real
+# password locally (on `install`, or on a prior `desktop` boot), that's a
+# genuine local edit and keeps winning over anything rebaked here, so
+# there's no need to keep passing PASSWORD_HASH on every rebuild. It's
+# only required for a `desktop` image nothing has ever logged into yet.
+RUN test -n "$USERNAME" && \
+    systemd-sysusers && \
+    if [ -n "$PASSWORD_HASH" ]; then usermod -p "$PASSWORD_HASH" "$USERNAME"; fi
 
 # KDE Plasma, fingerprint, keyring
+# Fedora 44's kde-desktop group defaults to `plasmalogin` (Plasma's own
+# login/session manager) rather than sddm, and already presets
+# display-manager.service -> plasmalogin.service on install. Installing
+# sddm alongside it conflicts over that same symlink, so it's left out.
 RUN dnf -y group install kde-desktop && \
     dnf -y install fprintd fprintd-pam gnome-keyring gnome-keyring-pam seahorse && \
     dnf clean all
 
-RUN systemctl enable sddm.service && \
-    systemctl set-default graphical.target && \
+RUN systemctl set-default graphical.target && \
     (authselect select local with-fingerprint with-pam-gnome-keyring --force || \
      authselect select sssd  with-fingerprint with-pam-gnome-keyring --force)
 
