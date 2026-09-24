@@ -13,17 +13,28 @@ Referenced files (already in this repo, not duplicated here):
 - `/etc/containers/policy.json`, `/etc/containers/registries.d/*.yaml` —
   added later, once publishing to a registry (Phase 8).
 
-**How the account works:** your user account is declared via a
-`systemd-sysusers` config file shipped in `/usr/lib/sysusers.d/`, not created
-with `useradd`. That file lives in `/usr` — part of the versioned image, not
-the mutable `/etc` that bootc merges across upgrades — so the account gets
-(re-)created at boot on *any* image built from `desktop`, including a bare
-image pulled straight from a registry with no local build at all.
-`sysusers.d` doesn't set passwords, so the `install` stage force-creates the
-account at build time and bakes in an initial password, just to get through
-the very first boot. From then on, set your real password once with
-`passwd` — as a genuine local edit, it survives every future switch/upgrade
-on its own, the same way any other local `/etc` change does.
+**How the account works:** the account is declared via a `systemd-sysusers`
+config file shipped in `/usr/lib/sysusers.d/`, part of the versioned image
+rather than the mutable `/etc` that bootc merges across upgrades — this is a
+defensive baseline, so the account still gets (re-)created at boot on *any*
+future image built from `desktop`, including one with no local build at all.
+
+That declaration alone isn't enough on its own, though: `sysusers.d` doesn't
+set a password, and the very first switch away from `install` treats an
+untouched account as "unmodified" and can adopt the new image's own default
+`/etc/passwd` wholesale — wiping the account rather than just resetting its
+password, since the account never existed in the destination image's own
+baked default at all. So `desktop` also materializes the account at build
+time — unconditionally, regardless of whether a password is supplied — so
+its own default `/etc/passwd` always has it. `PASSWORD_HASH` itself is only
+required for `install` (nothing has logged in anywhere yet, so it's the only
+way to get through the very first boot) and optional for `desktop`: set your
+real password once via `passwd` while still on `install`, and it becomes a
+genuine local edit that keeps winning over anything rebaked into `desktop`
+afterward — so `desktop` builds don't need `PASSWORD_HASH` at all from then
+on. Revisit this before actually publishing `desktop` to a registry
+(Phase 8): a shared image shouldn't carry a personal password hash even as
+an optional argument.
 
 ---
 
@@ -185,16 +196,26 @@ sudo systemctl reboot     # remove the USB
 
 - [ ] Unlock the disk with the LUKS passphrase at boot.
 - [ ] Log in on the text console with your username/password (this is the
-      password baked into `install` — you'll replace it shortly).
+      password baked into `install`).
 - [ ] Bring up networking with `nmtui`, then confirm connectivity, e.g.
       `ping -c1 fedoraproject.org`.
+- [ ] Set your real password **now, while still on `install`**, before
+      building or switching to anything:
+
+  ```bash
+  passwd
+  ```
+
+  This is what makes the rest of this phase simpler: once your password
+  is a genuine local edit, it keeps winning over anything baked into
+  future builds, so `desktop`'s build no longer needs a password at all.
 - [ ] Do **not** run `useradd`, or otherwise hand-edit `/etc/passwd`,
       before the switch below — the upcoming `/etc` merge can lock out
-      accounts created outside the image. Running `passwd` is fine.
+      accounts created outside the image.
 
 `git clone` the repo into your home directory and build the `desktop`
-stage — this is now the real, final image, with no separate "local"
-stage or password build-arg needed:
+stage. No `PASSWORD_HASH` needed this time, since your real password is
+already set locally and will carry over:
 
 ```bash
 git clone <repo-url> ~/fw13 && cd ~/fw13
@@ -213,13 +234,9 @@ sudo systemctl reboot
 
 - [ ] If the new image fails to boot: select the previous entry in the
       GRUB menu, then run `sudo bootc rollback`.
-- [ ] After reboot, confirm you land on the SDDM login screen and can
-      log in with the password from `install`.
-- [ ] Set your real password now, so it persists locally from here on:
-
-  ```bash
-  passwd
-  ```
+- [ ] After reboot, confirm you land on the graphical login screen
+      (Plasma's `plasmalogin`, not SDDM — see the Containerfile note in
+      Phase 2) and can log in with the password you set above.
 
 ---
 
@@ -288,7 +305,9 @@ fprintd-verify
       client is acceptable — Microsoft's Linux client officially targets
       Ubuntu/RHEL with GNOME, so enrollment or compliance may fail.
 
-To try it, rebuild `desktop` with the Intune flag and upgrade in place:
+To try it, rebuild `desktop` with the Intune flag and upgrade in place.
+No `PASSWORD_HASH` needed, since your real password (Phase 4) is already
+a local edit and carries over on its own:
 
 ```bash
 sudo podman build --target desktop --build-arg WITH_INTUNE=1 \
