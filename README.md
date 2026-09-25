@@ -234,9 +234,8 @@ sudo systemctl reboot
 
 - [ ] If the new image fails to boot: select the previous entry in the
       GRUB menu, then run `sudo bootc rollback`.
-- [ ] After reboot, confirm you land on the graphical login screen
-      (Plasma's `plasmalogin`, not SDDM — see the Containerfile note in
-      Phase 2) and can log in with the password you set above.
+- [ ] After reboot, confirm you land on the SDDM login screen and can log
+      in with the password you set above.
 
 ---
 
@@ -382,3 +381,64 @@ sudo podman push --sign-by-sigstore-private-key ./fw13-sign.private \
   at the top of this file.
 - [ ] When ready, move image builds to CI so pushes are automated instead
       of run from your own machine.
+
+---
+
+## Troubleshooting boot / login issues
+
+Techniques for debugging a boot that hangs, crashes, or won't log in,
+useful regardless of the specific cause.
+
+**See real boot messages instead of the splash screen.** At the
+GRUB/systemd-boot menu, press `e` on the entry, find the line starting
+`linux`, and delete `rhgb quiet` from the end of it. Boot with `Ctrl+X`
+(or `F10`). One-boot-only — nothing is saved.
+
+**Skip the graphical target entirely** to get a normal text login even if
+the desktop/greeter itself is what's broken. Same edit screen: add
+`systemd.unit=multi-user.target` to the end of the `linux` line, then
+boot. This bypasses `graphical.target` (and whatever's hanging under it)
+completely.
+
+**Read the log of a boot that already happened**, even a hung or crashed
+one — the journal is written to disk continuously, not just on clean
+shutdown, and it's shared across every bootc deployment:
+
+```bash
+journalctl --list-boots          # see all available boots
+journalctl -b -1 --no-pager      # -1 = one boot before the current one
+```
+
+Narrow to a specific unit if you know roughly where it's failing:
+
+```bash
+journalctl -b -1 -u graphical.target -u sddm.service --no-pager
+```
+
+**Roll back to the previous deployment** if the current one won't boot or
+log in at all:
+
+```bash
+sudo bootc rollback
+sudo systemctl reboot
+```
+
+Or select the older entry manually at the GRUB menu without changing the
+default.
+
+**Test SELinux as a variable**, without a persistent change:
+
+```bash
+sudo sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+sudo systemctl reboot
+```
+
+`setenforce 0` alone does **not** survive a reboot — `/etc/selinux/config`
+is what's actually read at boot, so editing it directly is the real test.
+Revert the same way afterward. If Permissive changes anything, relabel
+properly rather than staying Permissive long-term:
+
+```bash
+sudo touch /.autorelabel
+sudo systemctl reboot
+```
