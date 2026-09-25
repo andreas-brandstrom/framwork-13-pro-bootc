@@ -73,15 +73,20 @@ RUN test -n "$USERNAME" && \
     if [ -n "$PASSWORD_HASH" ]; then usermod -p "$PASSWORD_HASH" "$USERNAME"; fi
 
 # KDE Plasma, fingerprint, keyring
-# Fedora 44's kde-desktop group defaults to `plasmalogin` (Plasma's own
-# login/session manager) rather than sddm, and already presets
-# display-manager.service -> plasmalogin.service on install. Installing
-# sddm alongside it conflicts over that same symlink, so it's left out.
+# Using sddm rather than Fedora 44's new default (plasmalogin): extensive
+# live debugging showed plasmalogin failing to start correctly in
+# different, inconsistent ways across boots (clean login rejection, a
+# crash after the greeter loaded, and not reaching the greeter at all) --
+# symptomatic of immature, still-settling packaging rather than anything
+# fixable in this Containerfile. sddm is mature and well-tested. --force
+# is needed because plasmalogin's own package already claims the
+# display-manager.service symlink by default.
 RUN dnf -y group install kde-desktop && \
-    dnf -y install fprintd fprintd-pam gnome-keyring gnome-keyring-pam seahorse && \
+    dnf -y install sddm fprintd fprintd-pam gnome-keyring gnome-keyring-pam seahorse && \
     dnf clean all
 
-RUN systemctl set-default graphical.target && \
+RUN systemctl enable --force sddm.service && \
+    systemctl set-default graphical.target && \
     (authselect select local with-fingerprint with-pam-gnome-keyring --force || \
      authselect select sssd  with-fingerprint with-pam-gnome-keyring --force)
 
