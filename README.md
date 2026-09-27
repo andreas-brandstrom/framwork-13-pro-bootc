@@ -336,6 +336,77 @@ sudo systemctl reboot
 
 ---
 
+## Development toolbox (opencode, language toolchains)
+
+`toolbox` is baked into the image; the toolbox itself, and everything
+inside it, is created live and lives entirely in `/var` — freely mutable,
+with no relationship to the immutable host, and no rebuild ever needed to
+change it.
+
+Create it once:
+
+```bash
+toolbox create dev
+```
+
+Enter it and install whatever a project needs (Node, Rust, opencode,
+linters, ...) exactly like a normal mutable Fedora system:
+
+```bash
+toolbox enter dev
+curl -fsSL https://opencode.ai/install | bash
+```
+
+opencode deliberately lives here rather than on the host image, for two
+reasons: it can freely install and manage its own tooling without ever
+touching the bootc image, and `toolbox` mirrors your real `$HOME` and
+host paths exactly — which matters because Zed hands opencode a working
+directory over ACP, and that path has to resolve to the same files Zed
+itself sees. A devcontainer would remap the project to a different path
+(e.g. `/workspaces/...`) and break that.
+
+Point Zed at it in `~/.config/zed/settings.json`, instead of a host
+binary:
+
+```json
+{
+  "agent_servers": {
+    "OpenCode": {
+      "command": "toolbox",
+      "args": ["run", "--container", "dev", "opencode", "acp"]
+    }
+  }
+}
+```
+
+For per-project reproducibility on top of this (pinning exact toolchain
+versions, shareable with teammates/CI), use a `.devcontainer.json` in the
+project itself — the `devcontainer` CLI works standalone even if Zed's
+own devcontainer support doesn't cover a given case.
+
+---
+
+## Flatpak apps (Bitwarden, etc.)
+
+The `flatpak` package is baked into the image, but the Flathub *remote*
+has to be added live on the actual running system, once, rather than in
+the Containerfile — `flatpak remote-add` writes into `/var/lib/flatpak`,
+and bootc only seeds an image's `/var` on the very first-ever deployment,
+so adding it at build time silently does nothing on any later one:
+
+```bash
+sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+```
+
+After that, installing apps is a normal one-liner, and persists on its
+own the same way `passwd` does:
+
+```bash
+flatpak install flathub com.bitwarden.desktop
+```
+
+---
+
 ## Phase 8 — Later: registry + signing
 
 Once the base system is stable and you're ready to publish. Because

@@ -109,4 +109,29 @@ RUN mkdir -p /var/opt && \
       printf 'd /var/opt 0755 root root -\nL+ /var/opt/microsoft - - - - /usr/lib/opt/microsoft\n' > /usr/lib/tmpfiles.d/microsoft-opt.conf; \
     fi
 
+# Base desktop apps. Bitwarden is deliberately NOT baked in here -- it's
+# a Flatpak, and Flatpak app *installs* are per-system mutable state that
+# belongs in /var, not image content in /usr. Just install the `flatpak`
+# package itself (real /usr content); the Flathub *remote* has to be
+# added live on the running system instead (see README) -- `flatpak
+# remote-add` writes into /var/lib/flatpak, and bootc only seeds an
+# image's /var on the very first-ever deployment, so adding it here would
+# silently do nothing on any later deployment like this one. Firefox is a
+# normal RPM, so it's baked in directly.
+RUN dnf -y install firefox flatpak && \
+    dnf clean all
+
+# Developer tools. Language toolchains (Node, Rust, etc.) deliberately
+# don't go here -- see the toolbox/devcontainer note in the README. opencode
+# also deliberately isn't installed here -- it lives inside a `toolbox`
+# instead (see README), so it can freely install/manage its own tooling
+# without ever touching this image, and so its filesystem view matches
+# Zed's exactly for ACP sessions. Zed has no official Fedora repo; using
+# a community COPR that's tracking Fedora 44 (verify it's still current
+# before relying on it long-term).
+RUN dnf -y install 'dnf5-command(copr)' && \
+    dnf -y copr enable myriad-sun/zed && \
+    dnf -y install zed toolbox && \
+    dnf clean all
+
 RUN bootc container lint
